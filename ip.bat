@@ -1,505 +1,398 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal EnableDelayedExpansion
+chcp 65001 >nul 2>&1
 
-chcp 65001 >nul
-mode con: cols=80 lines=30
+REM ============================================================
+REM  Network Tester by Fran-Byte  -  CMD/BAT version
+REM ============================================================
 
-:: Network Tester by Fran Byte -
-:: Este programa permite configurar IP estática/dinámica y probar conectividad
-
-:main
-cls
-echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║      NETWORK TESTER v2.0 by Fran-Byte        ║
-echo                  ║         (Admin privileges required)          ║
-echo                  ╚══════════════════════════════════════════════╝
-echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║                   MAIN MENU                  ║
-echo                  ╠══════════════════════════════════════════════╣
-echo                  ║   1.  Set static IP                          ║
-echo                  ║   2.  Set DHCP                               ║
-echo                  ║   3.  Test connectivity (Ping Test)          ║
-echo                  ║   4.  Reset Ethernet adapters                ║
-echo                  ║   5.  Diagnose network issues                ║
-echo                  ║   6.  Exit                                   ║
-echo                  ╚══════════════════════════════════════════════╝
-echo.
-set /p choice="                   Select an option [1-6]: "
-
-if "!choice!"=="1" goto static_ip
-if "!choice!"=="2" goto dhcp
-if "!choice!"=="3" goto ping_test
-if "!choice!"=="4" goto restore_adapters
-if "!choice!"=="5" goto network_diagnosis
-if "!choice!"=="6" goto exit
-
-goto main
-
-:static_ip
-cls
-echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║            CONFIGURE STATIC IP               ║
-echo                  ╚══════════════════════════════════════════════╝
-echo.
-
-:: Intentar hasta 3 veces con delay
-set retry_count=0
-
-:retry_detect
-set adapters_count=0
-
-:: Esperar antes de detectar (solo en reintentos)
-if !retry_count! gtr 0 (
-    echo                  Retrying detection... (!retry_count!/3)
-    timeout /t 1 /nobreak >nul
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+    echo.
+    echo  [ERROR] Run this script as Administrator.
+    pause
+    exit /b
 )
 
-echo                  Network interfaces list:
-echo                  ══════════════════════════════════════════════
-echo.
-set adapters_count=0
+REM -- Default IPs ---------------------------------------------
+set IP_HOST_1=192.168.0.24
+set IP_HOST_2=192.168.1.2
+set IP_HOST_3=192.168.0.2
+set IP_HOST_4=10.117.3.84
+set IP_HOST_5=192.168.0.205
+set IP_HOST_6=192.168.1.1
+set IP_HOST_7=192.168.1.34
+set IP_HOST_8=192.168.199.175
 
-for /f "tokens=4* delims= " %%a in ('netsh interface show interface ^| findstr "Conectado Connected"') do (
-    set /a adapters_count+=1
-    set adapter!adapters_count!=%%a %%b
-    echo                  !adapters_count!.  %%a %%b
-)
+set IP_GW_1=192.168.0.25
+set IP_GW_2=192.168.0.30
+set IP_GW_3=192.168.0.1
+set IP_GW_4=192.168.0.5
+set IP_GW_5=192.168.1.1
+set IP_GW_6=10.117.3.85
+set IP_GW_7=192.168.0.201
+set IP_GW_8=192.168.1.2
+set IP_GW_9=192.168.1.35
+set IP_GW_10=192.168.199.176
 
-if !adapters_count! equ 0 (
-    set /a retry_count+=1
-    if !retry_count! lss 3 (
-        goto retry_detect
+REM -- Selected values -----------------------------------------
+set SEL_HOST=%IP_HOST_1%
+set SEL_GW=%IP_GW_1%
+set SEL_ADAPTER=
+set PING_COUNT=100
+set PING_MODE=Normal Check
+set MAX_ERR=2
+
+REM -- Detect ALL adapters at startup (including disabled) -----
+set TOTAL_ADAPTERS=0
+for /f "skip=1 tokens=* delims=" %%A in ('wmic nic where "NetConnectionID like '%%'" get NetConnectionID 2^>nul') do (
+    set LINE=%%A
+    for /f "tokens=* delims= " %%S in ("!LINE!") do set LINE=%%S
+    if not "!LINE!"=="" (
+        set /a TOTAL_ADAPTERS+=1
+        set ALL_ADAPTER_!TOTAL_ADAPTERS!=!LINE!
     )
-   
-    echo.
-    echo                  ╔══════════════════════════════════════════════╗
-    echo                  ║                  ERROR                       ║
-    echo                  ╠══════════════════════════════════════════════╣
-    echo                  ║ No connected network adapters found          ║
-    echo                  ╚══════════════════════════════════════════════╝
-    echo.
-    
-    echo                  Available but disconnected adapters:
-    for /f "tokens=4* delims= " %%a in ('netsh interface show interface ^| findstr "Desconectado Disconnected"') do (
-        echo                  - ✗ %%a %%b [Disconnected]
-    )
-   
-    echo.
-    echo                  Possible solutions:
-    echo                  1. Check cable connection
-    echo                  2. Enable network card
-    echo                  3. Restart network adapter
-    echo.
-    choice /c 123R /n /m "Select: [1] Retry, [2] Menu, [3] Diagnose, [R] Restart adapters"
-   
-    if errorlevel 4 goto reset_adapters
-    if errorlevel 3 goto network_diagnosis
-    if errorlevel 2 goto main
-    if errorlevel 1 goto static_ip
-    goto main
 )
 
-echo.
-set /p adapter_num="                  Select the adapter [1-!adapters_count!]: "
-
-:: Convertir a número para validación
-set /a adapter_num=!adapter_num! 2>nul
-if !adapter_num! lss 1 goto static_ip
-if !adapter_num! gtr !adapters_count! goto static_ip
-
-set selected_adapter=!adapter%adapter_num%!
-
-:: Lista de IPs predefinidas
-set ip_host[1]=192.168.0.24
-set ip_host[2]=192.168.1.2
-set ip_host[3]=192.168.0.2
-set ip_host[4]=10.117.3.84
-set ip_host[5]=192.168.0.205
-set ip_host[6]=192.168.1.1
-set ip_host[7]=192.168.1.34
-set ip_host[8]=192.168.199.175
-
-set ip_gateway[1]=192.168.0.25
-set ip_gateway[2]=192.168.0.30
-set ip_gateway[3]=192.168.0.1
-set ip_gateway[4]=192.168.0.5
-set ip_gateway[5]=192.168.1.1
-set ip_gateway[6]=10.117.3.85
-set ip_gateway[7]=192.168.0.201
-set ip_gateway[8]=192.168.1.2
-set ip_gateway[9]=192.168.1.35
-set ip_gateway[10]=192.168.199.176
-
-:: Seleccionar Host IP
-:select_host_ip
+:MAIN_MENU
 cls
+color 0A
+echo ============================================================
+echo         NETWORK TESTER  by Fran-Byte
+echo ============================================================
 echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║            CONFIGURE STATIC IP               ║
-echo                  ╚══════════════════════════════════════════════╝
+echo  HOST     : !SEL_HOST!
+echo  GATEWAY  : !SEL_GW!
+echo  ETHERNET : !SEL_ADAPTER!
+echo  CHECK    : !PING_MODE!
 echo.
-echo                  Selected adapter: !selected_adapter!
+echo ------------------------------------------------------------
+echo  [1] Select HOST IP
+echo  [2] Select GATEWAY IP
+echo  [3] Select ETHERNET Adapter
+echo  [4] Select CHECK mode
+echo ------------------------------------------------------------
+echo  [5] SAVE SETTINGS (Static IP)
+echo  [6] DYNAMIC IP (DHCP)
+echo  [7] START TEST (Ping)
+echo ------------------------------------------------------------
+echo  [8] RESTORE ETHERNET Adapters
+echo  [H] HELP
+echo  [9] EXIT
+echo ------------------------------------------------------------
 echo.
-echo                  Available Host IPs:
-for /l %%i in (1,1,8) do echo                  %%i. !ip_host[%%i]!
-echo.
-echo                  M. Enter IP manually
-echo.
-set /p host_input="                  Select Host IP [1-8] or 'M' for manual: "
+set /p CHOICE="Option: "
 
-if /i "!host_input!"=="M" (
-    set /p host_ip="                  Enter IP address manually: "
-    goto gateway_selection
-)
+if "!CHOICE!"=="1" goto SELECT_HOST
+if "!CHOICE!"=="2" goto SELECT_GW
+if "!CHOICE!"=="3" goto SELECT_ADAPTER
+if "!CHOICE!"=="4" goto SELECT_CHECK
+if "!CHOICE!"=="5" goto SAVE_SETTINGS
+if "!CHOICE!"=="6" goto SET_DHCP
+if "!CHOICE!"=="7" goto START_TEST
+if "!CHOICE!"=="8" goto RESTORE_ETHERNETS
+if /i "!CHOICE!"=="H" goto HELP
+if "!CHOICE!"=="9" goto DO_EXIT
+goto MAIN_MENU
 
-set /a host_ip_num=!host_input!
-if !host_ip_num! lss 1 goto select_host_ip
-if !host_ip_num! gtr 8 goto select_host_ip
-set host_ip=!ip_host[%host_ip_num%]!
-
-:gateway_selection
-:: Seleccionar Gateway
-:select_gateway
+:SELECT_HOST
 cls
+echo ================= SELECT HOST IP =================
 echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║            CONFIGURE STATIC IP               ║
-echo                  ╚══════════════════════════════════════════════╝
+echo [1] %IP_HOST_1%
+echo [2] %IP_HOST_2%
+echo [3] %IP_HOST_3%
+echo [4] %IP_HOST_4%
+echo [5] %IP_HOST_5%
+echo [6] %IP_HOST_6%
+echo [7] %IP_HOST_7%
+echo [8] %IP_HOST_8%
+echo [M] Manual
 echo.
-echo                  Selected adapter: !selected_adapter!
-echo                  Host IP: !host_ip!
-echo.
-echo                  Available Gateway IPs:
-for /l %%i in (1,1,10) do echo                  %%i. !ip_gateway[%%i]!
-echo.
-echo                  M. Enter Gateway manually
-echo.
-set /p gateway_input="                  Select Gateway IP [1-10] or 'M' for manual: "
+set /p H="Option: "
+if "!H!"=="1" set SEL_HOST=%IP_HOST_1%
+if "!H!"=="2" set SEL_HOST=%IP_HOST_2%
+if "!H!"=="3" set SEL_HOST=%IP_HOST_3%
+if "!H!"=="4" set SEL_HOST=%IP_HOST_4%
+if "!H!"=="5" set SEL_HOST=%IP_HOST_5%
+if "!H!"=="6" set SEL_HOST=%IP_HOST_6%
+if "!H!"=="7" set SEL_HOST=%IP_HOST_7%
+if "!H!"=="8" set SEL_HOST=%IP_HOST_8%
+if /i "!H!"=="M" set /p SEL_HOST="Enter IP: "
+goto MAIN_MENU
 
-if /i "!gateway_input!"=="M" (
-    set /p gateway_ip="                  Enter Gateway address manually: "
-    goto configure_ip
+:SELECT_GW
+cls
+echo ================= SELECT GATEWAY =================
+echo.
+echo [1]  %IP_GW_1%
+echo [2]  %IP_GW_2%
+echo [3]  %IP_GW_3%
+echo [4]  %IP_GW_4%
+echo [5]  %IP_GW_5%
+echo [6]  %IP_GW_6%
+echo [7]  %IP_GW_7%
+echo [8]  %IP_GW_8%
+echo [9]  %IP_GW_9%
+echo [10] %IP_GW_10%
+echo [M]  Manual
+echo.
+set /p G="Option: "
+if "!G!"=="1"  set SEL_GW=%IP_GW_1%
+if "!G!"=="2"  set SEL_GW=%IP_GW_2%
+if "!G!"=="3"  set SEL_GW=%IP_GW_3%
+if "!G!"=="4"  set SEL_GW=%IP_GW_4%
+if "!G!"=="5"  set SEL_GW=%IP_GW_5%
+if "!G!"=="6"  set SEL_GW=%IP_GW_6%
+if "!G!"=="7"  set SEL_GW=%IP_GW_7%
+if "!G!"=="8"  set SEL_GW=%IP_GW_8%
+if "!G!"=="9"  set SEL_GW=%IP_GW_9%
+if "!G!"=="10" set SEL_GW=%IP_GW_10%
+if /i "!G!"=="M" set /p SEL_GW="Enter IP: "
+goto MAIN_MENU
+
+:SELECT_ADAPTER
+cls
+echo ================ SELECT ADAPTER ==================
+echo.
+set IDX=0
+for /f "tokens=1,* delims=:" %%A in ('ipconfig /all ^| findstr /i /c:"Ethernet adapter " /c:"Adaptador de Ethernet "') do (
+    set /a IDX+=1
+    set RAW=%%A
+    set RAW=!RAW:Ethernet adapter =!
+    set RAW=!RAW:Adaptador de Ethernet =!
+    for /f "tokens=* delims= " %%S in ("!RAW!") do set RAW=%%S
+    set ADAPTER_!IDX!=!RAW!
+    echo [!IDX!] !RAW!
+)
+echo [M] Manual
+echo.
+set /p AD="Option: "
+for /l %%i in (1,1,%IDX%) do if "!AD!"=="%%i" set SEL_ADAPTER=!ADAPTER_%%i!
+if /i "!AD!"=="M" set /p SEL_ADAPTER="Enter name: "
+goto MAIN_MENU
+
+:SELECT_CHECK
+cls
+echo ================ SELECT CHECK =====================
+echo.
+echo [1] Normal   (100 pings,   2 errors)
+echo [2] Extended (1000 pings,  6 errors)
+echo [3] Plus     (10000 pings, 20 errors)
+echo [4] EXTREM   (50000 pings, 100 errors)
+echo.
+set /p CK="Option: "
+if "!CK!"=="1" set PING_COUNT=100&set MAX_ERR=2&set PING_MODE=Normal
+if "!CK!"=="2" set PING_COUNT=1000&set MAX_ERR=6&set PING_MODE=Extended
+if "!CK!"=="3" set PING_COUNT=10000&set MAX_ERR=20&set PING_MODE=Plus
+if "!CK!"=="4" set PING_COUNT=50000&set MAX_ERR=100&set PING_MODE=EXTREM
+goto MAIN_MENU
+
+:SAVE_SETTINGS
+cls
+echo ============= SAVE SETTINGS (Static IP) =============
+echo.
+echo  Adapter  : !SEL_ADAPTER!
+echo  Host IP  : !SEL_HOST!
+echo  Gateway  : !SEL_GW!
+echo.
+if "!SEL_ADAPTER!"=="" (
+    echo  [ERROR] No adapter selected. Go to option [3] first.
+    pause
+    goto MAIN_MENU
 )
 
-set /a gateway_ip_num=!gateway_input!
-if !gateway_ip_num! lss 1 goto select_gateway
-if !gateway_ip_num! gtr 10 goto select_gateway
-set gateway_ip=!ip_gateway[%gateway_ip_num%]!
-
-:configure_ip
-:: Deshabilitar WiFi
+REM -- 0) Disable Wi-Fi first ----------------------------------
+echo  Disabling Wi-Fi...
 netsh interface set interface "Wi-Fi" admin=disable >nul 2>&1
+netsh interface set interface "WiFi" admin=disable >nul 2>&1
+netsh interface set interface "WLAN" admin=disable >nul 2>&1
 
-:: Configurar IP estática
-cls
-echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║            CONFIGURE STATIC IP               ║
-echo                  ╚══════════════════════════════════════════════╝
-echo.
-echo                  Setting static IP on !selected_adapter!...
-echo                  IP: !host_ip!
-echo                  Gateway: !gateway_ip!
-echo.
+REM -- 1) Enable the selected adapter --------------------------
+echo  Enabling adapter: !SEL_ADAPTER!
+netsh interface set interface "!SEL_ADAPTER!" admin=enable >nul 2>&1
+timeout /t 1 /nobreak >nul
 
-echo                  Executing: netsh interface ip set address "!selected_adapter!" static !host_ip! 255.255.255.0 !gateway_ip! 1
-netsh interface ip set address "!selected_adapter!" static !host_ip! 255.255.255.0 !gateway_ip! 1
+REM -- 2) Flush existing IP to avoid "object already exists" ---
+echo  Flushing existing IP config...
+netsh interface ip set address "!SEL_ADAPTER!" dhcp >nul 2>&1
+timeout /t 1 /nobreak >nul
 
-if !errorlevel! neq 0 (
-    echo.
-    echo                  ╔══════════════════════════════════════════════╗
-    echo                  ║                  ERROR                       ║
-    echo                  ╠══════════════════════════════════════════════╣
-    echo                  ║ Failed to set static IP                      ║
-    echo                  ╚══════════════════════════════════════════════╝
-    echo.
-    echo                  Possible solutions:
-    echo                  1. Run as Administrator
-    echo                  2. Check adapter name
-    echo                  3. Verify adapter is connected
-    pause
-    goto main
-)
+REM -- 3) Assign static IP -------------------------------------
+echo  Setting static IP...
+netsh interface ip set address "!SEL_ADAPTER!" static !SEL_HOST! 255.255.255.0 !SEL_GW! >nul 2>&1
+echo  Setting DNS to gateway...
+netsh interface ip set dns "!SEL_ADAPTER!" static !SEL_GW! >nul 2>&1
 
-echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║                  SUCCESS                     ║
-echo                  ╠══════════════════════════════════════════════╣
-echo                  ║ IP configuration successful                  ║
-echo                  ╚══════════════════════════════════════════════╝
-echo.
-
-:: Test de ping inmediato
-echo                  Testing connectivity to gateway !gateway_ip!...
-ping -n 4 !gateway_ip!
-
-echo.
-echo                  Press any key to return to main menu...
-pause >nul
-goto main
-
-:dhcp
-cls
-echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║               CONFIGURE DHCP                 ║
-echo                  ╚══════════════════════════════════════════════╝
-echo.
-
-:: Detección de adaptadores
-set adapters_count=0
-for /f "tokens=4* delims= " %%a in ('netsh interface show interface ^| findstr "Conectado Connected"') do (
-    set /a adapters_count+=1
-    set adapter!adapters_count!=%%a %%b
-    echo                  !adapters_count!.  %%a %%b
-)
-
-if !adapters_count! equ 0 (
-    echo                  No connected network adapters found
-    pause
-    goto main
-)
-
-echo.
-set /p adapter_num="                  Select the adapter [1-!adapters_count!]: "
-set /a adapter_num=!adapter_num!
-if !adapter_num! lss 1 goto dhcp
-if !adapter_num! gtr !adapters_count! goto dhcp
-
-set selected_adapter=!adapter%adapter_num%!
-
-:: Configure DHCP
-cls
-echo.
-echo                  Setting DHCP on !selected_adapter!...
-echo.
-netsh interface ip set address "!selected_adapter!" dhcp >nul
-if !errorlevel! neq 0 (
-    echo                  Error setting DHCP
-    pause
-    goto dhcp
-)
-
-:: Enable WiFi
-netsh interface set interface "Wi-Fi" admin=enable >nul 2>&1
-
-echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║                  SUCCESS                     ║
-echo                  ╠══════════════════════════════════════════════╣
-echo                  ║ DHCP configuration applied on !selected_adapter!║
-echo                  ╚══════════════════════════════════════════════╝
-echo.
-
-echo                  Press any key to return to main menu...
-pause >nul
-goto main
-
-:ping_test
-cls
-echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║            CONNECTIVITY TEST                 ║
-echo                  ╚══════════════════════════════════════════════╝
-echo.
-
-:: Obtener gateway actual - MÉTODO MEJORADO Y CORREGIDO
-set gateway=
-set found_gateway=0
-
-:: Método 1: Usar ipconfig con un enfoque más robusto
-for /f "tokens=13 delims= " %%a in ('ipconfig ^| findstr /i "Default Gateway"') do (
-    set gateway=%%a
-    if not "!gateway!"=="" if not "!gateway!"=="." if not "!gateway!"==":" set found_gateway=1
-)
-
-:: Método 2: Si el primer método falla, usar route print
-if !found_gateway! equ 0 (
-    for /f "tokens=3 delims= " %%a in ('route print ^| findstr /i "0.0.0.0.*0.0.0.0"') do (
-        set gateway=%%a
-        if not "!gateway!"=="" if not "!gateway!"=="0.0.0.0" set found_gateway=1
+REM -- 4) Disable all OTHER adapters ---------------------------
+for /l %%i in (1,1,%TOTAL_ADAPTERS%) do (
+    set OTHER=!ALL_ADAPTER_%%i!
+    if /i "!OTHER!" neq "!SEL_ADAPTER!" (
+        echo  Disabling: !OTHER!
+        netsh interface set interface "!OTHER!" admin=disable >nul 2>&1
     )
 )
 
-:: Método 3: Buscar en la tabla de rutas
-if !found_gateway! equ 0 (
-    for /f "tokens=3 delims= " %%a in ('route print ^| findstr /i "0.0.0.0"') do (
-        set gateway=%%a
-        if not "!gateway!"=="" if not "!gateway!"=="0.0.0.0" set found_gateway=1
-    )
-)
+echo.
+echo  [OK] Static IP applied. Wi-Fi and other adapters disabled.
+pause
+goto MAIN_MENU
 
-:: Si todavía no se encuentra, mostrar mensaje de error
-if !found_gateway! equ 0 (
-    echo                  Unable to detect gateway automatically
-    echo.
-    :manual_gateway_input
-    set /p gateway="                  Please enter the gateway IP address manually: "
-   
-    :: Validar la entrada
-    echo !gateway! | findstr /R "^[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$" >nul
-    if errorlevel 1 (
-        echo                  Invalid IP address format. Please use format: XXX.XXX.XXX.XXX
-        goto manual_gateway_input
-    )
+:SET_DHCP
+cls
+echo ============= DYNAMIC IP (DHCP) ======================
+echo.
+if "!SEL_ADAPTER!"=="" (
+    echo  [ERROR] No adapter selected. Go to option [3] first.
+    pause
+    goto MAIN_MENU
+)
+netsh interface ip set address "!SEL_ADAPTER!" dhcp >nul 2>&1
+netsh interface ip set dns    "!SEL_ADAPTER!" dhcp >nul 2>&1
+echo.
+echo  [OK] DHCP enabled on !SEL_ADAPTER!.
+pause
+goto MAIN_MENU
+
+:START_TEST
+cls
+echo ================= PING TEST ======================
+echo  Gateway : !SEL_GW!
+echo  Mode    : !PING_MODE!
+echo  Pings   : !PING_COUNT!
+echo  Max Err : !MAX_ERR!
+echo --------------------------------------------------
+set ERRORS=0
+set PING_I=1
+
+:PING_LOOP
+if !PING_I! GTR !PING_COUNT! goto PING_SUCCESS
+
+ping -n 1 !SEL_GW! >nul
+if errorlevel 1 (
+    set /a ERRORS+=1
+    echo [!PING_I!] ERROR (!ERRORS!)
+    if !ERRORS! GEQ !MAX_ERR! goto FAIL
 ) else (
-    echo                  Detected gateway: !gateway!
+    echo [!PING_I!] OK
 )
+set /a PING_I+=1
+goto PING_LOOP
 
+:PING_SUCCESS
 echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║               TEST OPTIONS                   ║
-echo                  ╠══════════════════════════════════════════════╣
-echo                  ║   1.  Quick test (10 pings)                  ║
-echo                  ║   2.  Normal test (100 pings)                ║
-echo                  ║   3.  Extended test (1000 pings)             ║
-echo                  ║   4.  Return to menu                         ║
-echo                  ╚══════════════════════════════════════════════╝
+echo ================== SUCCESS =======================
+pause
+goto MAIN_MENU
+
+:FAIL
 echo.
-choice /c 1234 /n /m "                  Select test type [1-4]: "
+echo ================== FAIL ==========================
+echo  Errors: !ERRORS! / !MAX_ERR!
+pause
+goto MAIN_MENU
 
-if errorlevel 4 goto main
-if errorlevel 3 set pings=1000
-if errorlevel 2 set pings=100
-if errorlevel 1 set pings=10
-
+:RESTORE_ETHERNETS
 cls
+echo ============= RESTORE ALL ETHERNET ADAPTERS ==========
 echo.
-echo                  Performing !pings! pings to !gateway!
-echo.
-ping -n !pings! !gateway!
-echo.
-echo                  Test completed. Press any key to continue...
-pause >nul
-goto main
+call :DO_RESTORE
+echo  All adapters restored to DHCP.
+pause
+goto MAIN_MENU
 
-:restore_adapters
+:DO_EXIT
 cls
+echo ============================================================
+echo   EXIT - Restoring all adapters before closing...
+echo ============================================================
 echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║           RESET ETHERNET ADAPTERS            ║
-echo                  ╚══════════════════════════════════════════════╝
-echo.
+call :DO_RESTORE
+echo  All adapters restored. Closing...
+timeout /t 2 /nobreak >nul
+exit
 
-:: Habilitar todos los adaptadores de red
-set count=0
-
-:: Habilitar WiFi
+REM ============================================================
+REM  SUBRUTINA COMPARTIDA - usada por opcion 8 y opcion 9
+REM ============================================================
+:DO_RESTORE
+echo  Enabling Wi-Fi...
 netsh interface set interface "Wi-Fi" admin=enable >nul 2>&1
-echo                   Enabled adapter: Wi-Fi
-set /a count+=1
-
-:: Habilitar todos los adaptadores Ethernet
-for /f "tokens=4* delims= " %%a in ('netsh interface show interface ^| findstr /i "Ethernet"') do (
-    set adapter_name=%%a %%b
-    netsh interface set interface "!adapter_name!" admin=enable >nul
-    set /a count+=1
-    echo                   Enabled adapter: !adapter_name!
+netsh interface set interface "WiFi"  admin=enable >nul 2>&1
+netsh interface set interface "WLAN"  admin=enable >nul 2>&1
+set EXIT_TOTAL=0
+for /f "skip=1 tokens=* delims=" %%A in ('wmic nic where "NetConnectionID like '%%'" get NetConnectionID 2^>nul') do (
+    set LINE=%%A
+    for /f "tokens=* delims= " %%S in ("!LINE!") do set LINE=%%S
+    if not "!LINE!"=="" (
+        set /a EXIT_TOTAL+=1
+        set EXIT_ADAPTER_!EXIT_TOTAL!=!LINE!
+    )
 )
-
-:: Configurar todos los adaptadores Ethernet en DHCP
-for /f "tokens=4* delims= " %%a in ('netsh interface show interface ^| findstr /i "Ethernet"') do (
-    set adapter_name=%%a %%b
-    netsh interface ip set address "!adapter_name!" dhcp >nul
-    echo                   Configured DHCP on: !adapter_name!
+for /l %%i in (1,1,%EXIT_TOTAL%) do (
+    set ADNAME=!EXIT_ADAPTER_%%i!
+    echo  Enabling : !ADNAME!
+    netsh interface set interface "!ADNAME!" admin=enable >nul 2>&1
+    echo  DHCP     : !ADNAME!
+    netsh interface ip set address "!ADNAME!" dhcp >nul 2>&1
+    netsh interface ip set dns    "!ADNAME!" dhcp >nul 2>&1
+    echo  [OK] !ADNAME!
+    echo.
 )
+goto :eof
 
-echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║                  SUCCESS                     ║
-echo                  ╠══════════════════════════════════════════════╣
-echo                  ║ Total adapters enabled: !count!              ║
-echo                  ║ All network adapters reset to DHCP           ║
-echo                  ╚══════════════════════════════════════════════╝
-echo.
-
-echo                  Press any key to return to main menu...
-pause >nul
-goto main
-
-:network_diagnosis
+:HELP
 cls
+color 0B
+echo ============================================================
+echo         NETWORK TESTER  by Fran-Byte  -  HELP
+echo ============================================================
 echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║            NETWORK DIAGNOSIS                 ║
-echo                  ╚══════════════════════════════════════════════╝
+echo  OBJETIVO DEL PROGRAMA
+echo  ----------------------
+echo  Herramienta para configurar rapidamente la IP estatica
+echo  de un adaptador Ethernet y verificar la conexion mediante
+echo  pings continuos al gateway. Disenada para entornos
+echo  industriales donde se requiere una red estable y aislada.
 echo.
-echo                  Running network diagnostics...
+echo  FLUJO DE USO RECOMENDADO
+echo  ------------------------
+echo  1. Selecciona la IP del HOST (tu maquina)        -> Op. 1
+echo  2. Selecciona la IP del GATEWAY (equipo destino) -> Op. 2
+echo  3. Selecciona el adaptador Ethernet a usar       -> Op. 3
+echo  4. Selecciona el modo de prueba (pings)          -> Op. 4
+echo  5. Guarda la configuracion con IP estatica       -> Op. 5
+echo  6. Lanza el test de ping al gateway              -> Op. 7
 echo.
-
-:: 1. Check adapters
-echo                  ══════════════════════════════════════════════
-echo                  NETWORK ADAPTERS:
-echo                  ══════════════════════════════════════════════
-netsh interface show interface
+echo  OPCIONES DETALLADAS
+echo  -------------------
+echo  [1] HOST IP    : IP que se asignara a tu maquina.
+echo  [2] GATEWAY IP : IP del equipo al que haras ping.
+echo  [3] ETHERNET   : Adaptador que recibira la IP estatica.
+echo  [4] CHECK MODE : Numero de pings y tolerancia de errores:
+echo                   Normal   =   100 pings,   2 errores max
+echo                   Extended =  1000 pings,   6 errores max
+echo                   Plus     = 10000 pings,  20 errores max
+echo                   EXTREM   = 50000 pings, 100 errores max
 echo.
-
-:: 2. Check IP configuration
-echo                  ══════════════════════════════════════════════
-echo                  IP CONFIGURATION:
-echo                  ══════════════════════════════════════════════
-ipconfig
+echo  [5] SAVE       : Desactiva el Wi-Fi, asigna IP estatica
+echo                   al adaptador seleccionado y desactiva
+echo                   el resto de adaptadores.
+echo  [6] DYNAMIC IP : Vuelve el adaptador seleccionado a DHCP.
+echo  [7] START TEST : Lanza pings continuos al gateway.
+echo                   Muestra OK o ERROR en cada ping.
+echo                   Para si se supera el maximo de errores.
+echo  [8] RESTORE    : Reactiva todos los adaptadores incluido
+echo                   el Wi-Fi y los configura en DHCP.
+echo  [9] EXIT       : Ejecuta RESTORE automaticamente y cierra.
 echo.
-
-:: 3. Check gateway connectivity
-echo                  ══════════════════════════════════════════════
-echo                  GATEWAY TEST:
-echo                  ══════════════════════════════════════════════
-set gateway=
-for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr "Default Gateway"') do (
-    set gateway=%%a
-    set gateway=!gateway: =!
-)
-
-if "!gateway!"=="" (
-    echo                   Default gateway not detected
-) else (
-    echo                   Detected gateway: !gateway!
-    ping -n 4 !gateway!
-)
-
+echo  NOTAS IMPORTANTES
+echo  -----------------
+echo  - Ejecutar siempre como Administrador.
+echo  - SAVE desactiva el Wi-Fi para evitar conflictos de ruta.
+echo  - Usar RESTORE u EXIT al terminar para dejar la red
+echo    en estado normal antes de salir del programa.
 echo.
-echo                  Diagnostics completed. Review the information above.
-echo.
-echo                  Press any key to return to main menu...
-pause >nul
-goto main
-
-:exit
-cls
-echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║                 EXITING PROGRAM              ║
-echo                  ╚══════════════════════════════════════════════╝
-echo.
-
-:: Restaurar configuración de red a DHCP en todos los adaptadores
-echo                  Restoring network configuration to DHCP...
-for /f "tokens=4* delims= " %%a in ('netsh interface show interface ^| findstr /i "Ethernet"') do (
-    set adapter_name=%%a %%b
-    netsh interface ip set address "!adapter_name!" dhcp >nul
-    echo                   Restored DHCP on: !adapter_name!
-)
-
-:: Habilitar todos los adaptadores
-for /f "tokens=4* delims= " %%a in ('netsh interface show interface') do (
-    set adapter_name=%%a %%b
-    netsh interface set interface "!adapter_name!" admin=enable >nul
-)
-
-:: Habilitar WiFi específicamente
-netsh interface set interface "Wi-Fi" admin=enable >nul 2>&1
-
-echo.
-echo                  ╔══════════════════════════════════════════════╗
-echo                  ║                  COMPLETED                   ║
-echo                  ╠══════════════════════════════════════════════╣
-echo                  ║ All network adapters restored to DHCP        ║
-echo                  ║ All adapters have been enabled               ║
-echo                  ║ Program finished                             ║
-echo                  ╚══════════════════════════════════════════════╝
-timeout /t 3 >nul
-exit /b
+echo ============================================================
+pause
+goto MAIN_MENU
